@@ -20,9 +20,11 @@ label{display:flex;flex-direction:column;gap:3px;color:var(--mut);font-size:12px
 <div id="bar">
  <button id="go">Start</button><button id="pk">Peak hold</button><button id="rst">Reset peak</button>
  <button id="full">Fullscreen</button>
+ <button id="calBtn">Upload calibration</button><button id="clearCal">Clear calibration</button>
+ <input id="calFile" type="file" accept=".txt,.csv,text/plain" hidden>
  <label style="min-width:170px">Microphone<select id="mic"><option value="">System default</option></select></label>
 </div>
-<div id="info"><span id="cur">Touch the graph to read values</span><span><span id="calStatus">Loading calibration…</span> · <span id="micStatus">Microphone: system default</span></span></div>
+<div id="info"><span id="cur">Touch the graph to read values</span><span><span id="calStatus">No calibration loaded</span> · <span id="micStatus">Microphone: system default</span></span></div>
 <canvas id="cv"></canvas>
 <button id="exitFull">Exit fullscreen</button>
 <div id="panel">
@@ -104,18 +106,23 @@ function buildCal(){
 }
 function setCal(t,name){
   const p=parseCal(t);
-  if(!p){$('calStatus').textContent='CALIBRATION FILE ERROR';return false}
-  calPts=p;$('calStatus').textContent='MIC CALIBRATED · '+p.length+' points';
+  if(!p){$('calStatus').textContent='Calibration file invalid';return false}
+  calPts=p;$('calStatus').textContent='CALIBRATED · '+name+' · '+p.length+' points';
   buildCal();draw();return true;
 }
-async function loadCalibration(){
-  try{
-    const r=await fetch('./calibration.txt');
-    if(!r.ok)throw new Error('HTTP '+r.status);
-    if(!setCal(await r.text(),'calibration.txt'))throw new Error('Invalid calibration data');
-  }catch(e){$('calStatus').textContent='CALIBRATION FILE ERROR';$('calStatus').title=e.message}
-}
-loadCalibration();
+$('calBtn').onclick=()=>$('calFile').click();
+$('calFile').onchange=async e=>{
+ const file=e.target.files?.[0];if(!file)return;
+ try{
+  const text=await file.text();
+  if(!setCal(text,file.name))throw new Error('Could not read calibration points');
+  $('calStatus').textContent='CALIBRATED · '+file.name;
+ }catch(err){$('calStatus').textContent='Calibration file invalid';$('calStatus').title=err.message}
+ e.target.value='';
+};
+$('clearCal').onclick=()=>{
+ calPts=null;calBin=null;$('calStatus').textContent='No calibration loaded';draw();
+};
 
 function setFFT(){an.fftSize=+$('fft').value;buf=new Float32Array(an.frequencyBinCount);first=true;buildCal()}
 $('fft').onchange=()=>{if(an)setFFT()};
@@ -124,19 +131,25 @@ async function start(){
     const audio={echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1};
     if(selectedMic)audio.deviceId={exact:selectedMic};
     stream=await navigator.mediaDevices.getUserMedia({audio});
+    ctx=new (window.AudioContext||window.webkitAudioContext)();
+    if(ctx.state!=='running')await ctx.resume();
+    an=ctx.createAnalyser();an.smoothingTimeConstant=0;
+    ctx.createMediaStreamSource(stream).connect(an);
+    setFFT();
+    run=true;first=true;$('go').textContent='Stop';$('go').classList.add('on');
+    await refreshMics();
+    const track=stream.getAudioTracks()[0],settings=track?.getSettings?.()||{};
+    const found=[...$('mic').options].find(o=>o.value&&o.value===settings.deviceId);
+    $('micStatus').textContent=found?found.textContent:(selectedMic?'Selected input (routing unconfirmed)':'Microphone: system default');
+    if(navigator.wakeLock)navigator.wakeLock.request('screen').catch(()=>{});
+    requestAnimationFrame(loop);
+  }catch(e){
+    if(stream)stream.getTracks().forEach(t=>t.stop());
+    if(ctx)ctx.close();
+    run=false;stream=null;ctx=null;an=null;
+    $('go').textContent='Start';$('go').classList.remove('on');
+    $('cur').textContent='Audio start error: '+e.message;
   }
-  catch(e){$('cur').textContent='Mic error: '+e.message;selectedMic='';$('mic').value='';localStorage.removeItem('rtaMic');updateMicStatus();return}
-  ctx=new (window.AudioContext||window.webkitAudioContext)();
-  if(ctx.state!=='running')await ctx.resume();
-  an=ctx.createAnalyser();an.smoothingTimeConstant=0;
-  ctx.createMediaStreamSource(stream).connect(an);
-  setFFT();run=true;$('go').textContent='Stop';$('go').classList.add('on');
-  await refreshMics();
-  const track=stream.getAudioTracks()[0],settings=track?.getSettings?.()||{};
-  const found=[...$('mic').options].find(o=>o.value&&o.value===settings.deviceId);
-  $('micStatus').textContent=found?found.textContent:(selectedMic?'Selected input (routing unconfirmed)':'Microphone: system default');
-  if(navigator.wakeLock)navigator.wakeLock.request('screen').catch(()=>{});
-  requestAnimationFrame(loop);
 }
 function stop(){
   run=false;if(stream)stream.getTracks().forEach(t=>t.stop());if(ctx)ctx.close();
