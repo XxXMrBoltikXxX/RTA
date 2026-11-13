@@ -7,7 +7,7 @@
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
 body{display:flex;flex-direction:column;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
-#bar{display:flex;gap:6px;padding:8px;flex-wrap:wrap}
+#bar{display:flex;gap:6px;padding:8px;flex-wrap:wrap;align-items:center}
 button,select,input{background:var(--pn);color:var(--fg);border:1px solid var(--ln);border-radius:6px;padding:8px 10px;font:inherit;min-width:0}
 button.on{background:var(--tr);color:#04210f;border-color:var(--tr)}
 #go{min-width:84px;font-weight:600}
@@ -15,28 +15,67 @@ button.on{background:var(--tr);color:#04210f;border-color:var(--tr)}
 #cv{flex:1;min-height:160px;width:100%;touch-action:none;display:block}
 #panel{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;padding:8px}
 label{display:flex;flex-direction:column;gap:3px;color:var(--mut);font-size:12px}
+#micStatus{color:#93c5fd}#calStatus{color:var(--tr)}#exitFull{display:none;position:fixed;z-index:5;right:12px;top:12px}body.fullscreen #bar,body.fullscreen #info,body.fullscreen #panel{display:none}body.fullscreen #cv{min-height:0}body.fullscreen{padding:0}body.fullscreen #exitFull{display:block}
 </style></head><body>
 <div id="bar">
  <button id="go">Start</button><button id="pk">Peak hold</button><button id="rst">Reset peak</button>
- <button id="cal">Load cal file</button><button id="clr">Clear cal</button>
- <input id="file" type="file" hidden>
+ <button id="full">Fullscreen</button>
+ <label style="min-width:170px">Microphone<select id="mic"><option value="">System default</option></select></label>
 </div>
-<div id="info"><span id="cur">Touch the graph to read values</span><span id="cs">No calibration loaded</span></div>
+<div id="info"><span id="cur">Touch the graph to read values</span><span><span id="calStatus">Loading calibration…</span> · <span id="micStatus">Microphone: system default</span></span></div>
 <canvas id="cv"></canvas>
+<button id="exitFull">Exit fullscreen</button>
 <div id="panel">
  <label>Smoothing<select id="oct"><option value="0">None</option><option value="1">1/1 oct</option><option value="3" selected>1/3 oct</option><option value="6">1/6 oct</option><option value="12">1/12 oct</option><option value="24">1/24 oct</option></select></label>
- <label>Averaging<select id="avg"><option value="0.3">Fast</option><option value="0.1" selected>Medium</option><option value="0.03">Slow</option><option value="0.008">Very slow</option></select></label>
+ <label>Averaging<select id="avg"><option value="1">Instant</option><option value="0.65">Fast</option><option value="0.3" selected>Medium</option><option value="0.1">Slow</option><option value="0.03">Very slow</option><option value="0.008">Ultra slow</option></select></label>
  <label>FFT size<select id="fft"><option>8192</option><option selected>16384</option><option>32768</option></select></label>
  <label>Tilt (dB/oct)<select id="tilt"><option value="0">0 (flat)</option><option value="3">+3 (pink = flat)</option><option value="4.5">+4.5</option></select></label>
  <label>Top (dB)<input id="tp" type="number" value="0" step="5"></label>
  <label>Range (dB)<select id="rng"><option>60</option><option>80</option><option selected>100</option><option>120</option></select></label>
  <label>Level offset (dB)<input id="off" type="number" value="0" step="0.5"></label>
- <label>Cal file is<select id="sgn"><option value="1" selected>Mic response (subtract)</option><option value="-1">Correction (add)</option></select></label>
 </div>
 <script>
 const $=id=>document.getElementById(id),cv=$('cv'),g=cv.getContext('2d');
 const F0=20,F1=20000,L=36,B=16;
 let ctx,an,stream,buf,pw,calPts=null,calBin=null,run=false,first=true,W=0,H=0,vals=null,peak=null,pkOn=false,cx=null;
+
+let selectedMic=localStorage.getItem('rtaMic')||'';
+function micKind(label){
+ const s=(label||'').toLowerCase();
+ return /(usb|external|dayton|measurement|audio interface)/.test(s)?'External':'Internal / built-in';
+}
+async function refreshMics(){
+ if(!navigator.mediaDevices?.enumerateDevices)return;
+ try{
+  const devices=(await navigator.mediaDevices.enumerateDevices()).filter(d=>d.kind==='audioinput');
+  const sel=$('mic'),previous=selectedMic;
+  sel.innerHTML='<option value="">System default</option>';
+  devices.forEach((d,i)=>{const o=document.createElement('option');o.value=d.deviceId;o.textContent=(d.label||('Audio input '+(i+1)))+' · '+micKind(d.label);sel.appendChild(o)});
+  if(previous&&devices.some(d=>d.deviceId===previous))sel.value=previous;
+  else if(previous){selectedMic='';localStorage.removeItem('rtaMic');sel.value=''}
+  updateMicStatus();
+ }catch(e){$('micStatus').textContent='Microphone list unavailable'}
+}
+function updateMicStatus(){
+ const o=[...$('mic').options].find(x=>x.value===$('mic').value);
+ $('micStatus').textContent=o?o.textContent:'Microphone: system default';
+}
+$('mic').onchange=async()=>{
+ selectedMic=$('mic').value;
+ if(selectedMic)localStorage.setItem('rtaMic',selectedMic);else localStorage.removeItem('rtaMic');
+ updateMicStatus();
+ if(run){stop();await start()}
+};
+navigator.mediaDevices?.addEventListener?.('devicechange',refreshMics);
+async function setFullscreen(on){
+ if(on){document.body.classList.add('fullscreen');try{await document.documentElement.requestFullscreen?.()}catch(e){}}
+ else{document.body.classList.remove('fullscreen');if(document.fullscreenElement)try{await document.exitFullscreen()}catch(e){}}
+ setTimeout(rs,100);
+}
+$('full').onclick=()=>setFullscreen(true);
+$('exitFull').onclick=()=>setFullscreen(false);
+document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement)document.body.classList.remove('fullscreen');setTimeout(rs,100)});
+refreshMics();
 
 function parseCal(t){
   const p=[];
@@ -63,33 +102,45 @@ function buildCal(){
   calBin=new Float32Array(n);
   if(calPts)for(let k=1;k<n;k++)calBin[k]=calAt(k*bh);
 }
-function setCal(t,name,save){
+function setCal(t,name){
   const p=parseCal(t);
-  if(!p){$('cs').textContent='Not a valid cal file (need "freq dB" lines)';return}
-  calPts=p;$('cs').textContent='Cal: '+name+' ('+p.length+' pts)';
-  if(save)try{localStorage.setItem('rtaCal',JSON.stringify({t,name}))}catch(e){}
-  buildCal();draw();
+  if(!p){$('calStatus').textContent='CALIBRATION FILE ERROR';return false}
+  calPts=p;$('calStatus').textContent='MIC CALIBRATED · '+p.length+' points';
+  buildCal();draw();return true;
 }
-$('cal').onclick=()=>$('file').click();
-$('file').onchange=async e=>{const f=e.target.files[0];if(f){setCal(await f.text(),f.name,true)}e.target.value=''};
-$('clr').onclick=()=>{calPts=null;$('cs').textContent='No calibration loaded';try{localStorage.removeItem('rtaCal')}catch(e){}buildCal()};
-try{const s=JSON.parse(localStorage.getItem('rtaCal')||'null');if(s)setCal(s.t,s.name,false)}catch(e){}
+async function loadCalibration(){
+  try{
+    const r=await fetch('./calibration.txt');
+    if(!r.ok)throw new Error('HTTP '+r.status);
+    if(!setCal(await r.text(),'calibration.txt'))throw new Error('Invalid calibration data');
+  }catch(e){$('calStatus').textContent='CALIBRATION FILE ERROR';$('calStatus').title=e.message}
+}
+loadCalibration();
 
 function setFFT(){an.fftSize=+$('fft').value;buf=new Float32Array(an.frequencyBinCount);first=true;buildCal()}
 $('fft').onchange=()=>{if(an)setFFT()};
 async function start(){
-  try{stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1}})}
-  catch(e){$('cur').textContent='Mic error: '+e.message;return}
+  try{
+    const audio={echoCancellation:false,noiseSuppression:false,autoGainControl:false,channelCount:1};
+    if(selectedMic)audio.deviceId={exact:selectedMic};
+    stream=await navigator.mediaDevices.getUserMedia({audio});
+  }
+  catch(e){$('cur').textContent='Mic error: '+e.message;selectedMic='';$('mic').value='';localStorage.removeItem('rtaMic');updateMicStatus();return}
   ctx=new (window.AudioContext||window.webkitAudioContext)();
   if(ctx.state!=='running')await ctx.resume();
   an=ctx.createAnalyser();an.smoothingTimeConstant=0;
   ctx.createMediaStreamSource(stream).connect(an);
   setFFT();run=true;$('go').textContent='Stop';$('go').classList.add('on');
+  await refreshMics();
+  const track=stream.getAudioTracks()[0],settings=track?.getSettings?.()||{};
+  const found=[...$('mic').options].find(o=>o.value&&o.value===settings.deviceId);
+  $('micStatus').textContent=found?found.textContent:(selectedMic?'Selected input (routing unconfirmed)':'Microphone: system default');
   if(navigator.wakeLock)navigator.wakeLock.request('screen').catch(()=>{});
   requestAnimationFrame(loop);
 }
 function stop(){
-  run=false;stream.getTracks().forEach(t=>t.stop());ctx.close();an=null;
+  run=false;if(stream)stream.getTracks().forEach(t=>t.stop());if(ctx)ctx.close();
+  an=null;stream=null;ctx=null;
   $('go').textContent='Start';$('go').classList.remove('on');
 }
 $('go').onclick=()=>run?stop():start();
@@ -99,10 +150,10 @@ $('rst').onclick=()=>{peak=null};
 function loop(){
   if(!run)return;
   an.getFloatFrequencyData(buf);
-  const n=buf.length,a=+$('avg').value,s=+$('sgn').value,o=+$('off').value,tl=+$('tilt').value,N=+$('oct').value;
+  const n=buf.length,a=+$('avg').value,o=+$('off').value,tl=+$('tilt').value,N=+$('oct').value;
   if(first){pw=new Float32Array(n)}
   for(let k=0;k<n;k++){
-    const p=Math.pow(10,(buf[k]-s*calBin[k]+o)/10);
+    const p=Math.pow(10,(buf[k]-(calBin?calBin[k]:0)+o)/10);
     pw[k]=first?p:pw[k]+a*(p-pw[k]);
   }
   first=false;
