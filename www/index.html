@@ -20,7 +20,7 @@ label{display:flex;flex-direction:column;gap:3px;color:var(--mut);font-size:12px
 <div id="bar">
  <button id="go">Start</button><button id="pk">Peak hold</button><button id="rst">Reset peak</button>
  <button id="full">Fullscreen</button>
- <button id="sweep">Frequency sweep</button>
+ <button id="sweep" title="Plays a low-level sine sweep through your selected output. Keep volume low.">Frequency sweep</button>
  <select id="eqFormat" aria-label="EQ export format"><option value="peace">Peace EQ</option><option value="poweramp">Poweramp EQ</option></select>
  <button id="exportEq" disabled>Export EQ</button>
  <button id="calBtn">Upload calibration</button><button id="clearCal">Clear calibration</button>
@@ -138,7 +138,7 @@ async function start(){
     stream=await navigator.mediaDevices.getUserMedia({audio});
     ctx=new (window.AudioContext||window.webkitAudioContext)();
     if(ctx.state!=='running')await ctx.resume();
-    an=ctx.createAnalyser();an.smoothingTimeConstant=0;
+    an=ctx.createAnalyser();an.smoothingTimeConstant=0;an.minDecibels=-120;an.maxDecibels=0;
     ctx.createMediaStreamSource(stream).connect(an);
     setFFT();
     run=true;first=true;$('go').textContent='Stop';$('go').classList.add('on');
