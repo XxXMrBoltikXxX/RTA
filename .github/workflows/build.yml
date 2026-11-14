@@ -10,7 +10,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Embed build commit
-        run: echo '{"commit":"${GITHUB_SHA}"}' > www/build-info.json
+        run: echo "{\"commit\":\"$GITHUB_SHA\"}" > www/build-info.json
       - uses: actions/setup-node@v4
         with:
           node-version: 20
